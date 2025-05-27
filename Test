@@ -1,0 +1,25 @@
+import groovy.json.JsonBuilder
+
+// Initialize or fetch the existing buffer
+if (vars.getObject("students") == null) {
+    vars.putObject("students", [])
+}
+def students = vars.getObject("students")
+
+// Add current CSV record to buffer
+students << [
+    id: vars.get("id") as Integer,
+    name: vars.get("name"),
+    age: vars.get("age") as Integer,
+    email: vars.get("email")
+]
+
+// When 100 students collected, build JSON and send via HTTP
+if (students.size() == 100) {
+    def jsonBody = new JsonBuilder([students: students]).toPrettyString()
+    vars.put("jsonPayload", jsonBody)
+    vars.put("sendRequest", "true")
+    vars.putObject("students", []) // clear for next batch
+} else {
+    vars.put("sendRequest", "false")
+}
