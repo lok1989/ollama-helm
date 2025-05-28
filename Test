@@ -1,25 +1,86 @@
-import groovy.json.JsonBuilder
+class CacheEntry<V> {
+    final V value;
+    final long expiryTime;
 
-// Initialize or fetch the existing buffer
-if (vars.getObject("students") == null) {
-    vars.putObject("students", [])
+    CacheEntry(V value, long ttlInMillis) {
+        this.value = value;
+        this.expiryTime = System.currentTimeMillis() + ttlInMillis;
+    }
+
+    boolean isExpired() {
+        return System.currentTimeMillis() > expiryTime;
+    }
 }
-def students = vars.getObject("students")
 
-// Add current CSV record to buffer
-students << [
-    id: vars.get("id") as Integer,
-    name: vars.get("name"),
-    age: vars.get("age") as Integer,
-    email: vars.get("email")
-]
 
-// When 100 students collected, build JSON and send via HTTP
-if (students.size() == 100) {
-    def jsonBody = new JsonBuilder([students: students]).toPrettyString()
-    vars.put("jsonPayload", jsonBody)
-    vars.put("sendRequest", "true")
-    vars.putObject("students", []) // clear for next batch
-} else {
-    vars.put("sendRequest", "false")
+class DelayedCacheKey<K> implements Delayed {
+    private final K key;
+    private final long expiryTime;
+
+    DelayedCacheKey(K key, long delayMillis) {
+        this.key = key;
+        this.expiryTime = System.currentTimeMillis() + delayMillis;
+    }
+
+    public long getDelay(TimeUnit unit) {
+        return unit.convert(expiryTime - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    public int compareTo(Delayed other) {
+        return Long.compare(this.expiryTime, ((DelayedCacheKey<?>) other).expiryTime);
+    }
+
+    public K getKey() {
+        return key;
+    }
+}
+
+public class TTLSizeBoundCache<K, V> {
+    private final int maxSize;
+    private final long defaultTTL;
+    private final ConcurrentHashMap<K, CacheEntry<V>> map = new ConcurrentHashMap<>();
+    private final DelayQueue<DelayedCacheKey<K>> expiryQueue = new DelayQueue<>();
+
+    public TTLSizeBoundCache(int maxSize, long defaultTTL) {
+        this.maxSize = maxSize;
+        this.defaultTTL = defaultTTL;
+        startExpiryThread();
+    }
+
+    public void put(K key, V value) {
+        if (map.size() >= maxSize) {
+            evictOne();
+        }
+        map.put(key, new CacheEntry<>(value, defaultTTL));
+        expiryQueue.put(new DelayedCacheKey<>(key, defaultTTL));
+    }
+
+    public V get(K key) {
+        CacheEntry<V> entry = map.get(key);
+        if (entry == null || entry.isExpired()) {
+            map.remove(key);
+            return null;
+        }
+        return entry.value;
+    }
+
+    private void evictOne() {
+        Iterator<K> iter = map.keySet().iterator();
+        if (iter.hasNext()) {
+            map.remove(iter.next());
+        }
+    }
+
+    private void startExpiryThread() {
+        Thread cleaner = new Thread(() -> {
+            while (true) {
+                try {
+                    DelayedCacheKey<K> expiredKey = expiryQueue.take();
+                    map.remove(expiredKey.getKey());
+                } catch (InterruptedException ignored) {}
+            }
+        });
+        cleaner.setDaemon(true);
+        cleaner.start();
+    }
 }
