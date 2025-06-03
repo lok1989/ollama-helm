@@ -1,86 +1,230 @@
-class CacheEntry<V> {
-    final V value;
-    final long expiryTime;
+/*
+ * Updated Project: Spring Batch Distributed File Processor
+ *
+ * Java Imports
+ */
 
-    CacheEntry(V value, long ttlInMillis) {
-        this.value = value;
-        this.expiryTime = System.currentTimeMillis() + ttlInMillis;
+import org.springframework.batch.core.*;
+import org.springframework.batch.core.configuration.annotation.*;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.job.builder.JobBuilderHelper;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.listener.JobExecutionListenerSupport;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.repository.support.JobRepositoryFactoryBean;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.item.*;
+import org.springframework.batch.item.file.*;
+import org.springframework.batch.item.file.builder.*;
+import org.springframework.batch.item.file.mapping.*;
+import org.springframework.batch.item.file.transform.*;
+import org.springframework.beans.factory.annotation.*;
+import org.springframework.boot.*;
+import org.springframework.boot.autoconfigure.*;
+import org.springframework.context.*;
+import org.springframework.context.annotation.*;
+import org.springframework.core.io.*;
+import org.springframework.jdbc.datasource.*;
+import org.springframework.stereotype.*;
+
+import javax.persistence.*;
+import javax.sql.*;
+
+import java.nio.file.*;
+import java.util.*;
+ * Technologies: Spring Boot, Spring Batch, Oracle, Kafka (optional)
+ */
+
+// 1. Student Entity
+@Entity
+public class Student {
+    @Id @GeneratedValue
+    private Long id;
+    private String name;
+    private String email;
+    private int score;
+    // Getters, Setters, Constructors
+}
+
+// 2. Student Repository
+public interface StudentRepository extends JpaRepository<Student, Long> {}
+
+// 3. Batch Configuration
+
+// Job Factory to provide multiple job definitions
+@Component
+public class JobFactory {
+
+    @Autowired
+    private ApplicationContext context;
+
+    @Autowired
+    private JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    private Step studentStep;
+
+    @Autowired
+    private Step teacherStep;
+
+    public Job getJob(String jobType, JobExecutionListener listener) {
+        if ("student".equalsIgnoreCase(jobType)) {
+            return jobBuilderFactory.get("importStudentJob")
+                    .incrementer(new RunIdIncrementer())
+                    .listener(listener)
+                    .flow(studentStep)
+                    .end()
+                    .build();
+        } else if ("teacher".equalsIgnoreCase(jobType)) {
+            return jobBuilderFactory.get("importTeacherJob")
+                    .incrementer(new RunIdIncrementer())
+                    .listener(listener)
+                    .flow(teacherStep)
+                    .end()
+                    .build();
+        } else {
+            throw new IllegalArgumentException("Unknown job type: " + jobType);
+        }
+    }
+}
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig extends DefaultBatchConfigurer {
+
+    @Autowired
+    private JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @Override
+    public void setDataSource(DataSource dataSource) {
+        super.setDataSource(dataSource);
     }
 
-    boolean isExpired() {
-        return System.currentTimeMillis() > expiryTime;
+    @Override
+    protected JobRepository createJobRepository() throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(dataSource);
+        factory.setTransactionManager(new ResourcelessTransactionManager());
+        factory.setTablePrefix("HC_");
+        factory.afterPropertiesSet();
+        return factory.getObject();
+    }
+
+    @Bean
+    @StepScope
+    public FlatFileItemReader<Student> reader(
+            @Value("#{jobParameters['inputFile']}") String inputFile,
+            @Value("#{jobParameters['linesToSkip']}") Integer linesToSkip,
+            StepExecution stepExecution) {
+
+        ExecutionContext context = stepExecution.getJobExecution().getExecutionContext();
+        context.putString("originalFileName", Paths.get(inputFile).getFileName().toString());
+
+        return new FlatFileItemReaderBuilder<Student>()
+                .name("studentItemReader")
+                .resource(new FileSystemResource(inputFile))
+                .linesToSkip(linesToSkip != null ? linesToSkip : 0)
+                .lineMapper((line, lineNumber) -> {
+                    String[] fields = line.split(",");
+                    return new Student(null, fields[0], fields[1], Integer.parseInt(fields[2]));
+                })
+                .build();
+    }
+
+    @Bean
+    public ItemProcessor<Student, Student> processor() {
+        return student -> {
+            student.setName(student.getName().toUpperCase());
+            return student;
+        };
+    }
+
+    @Bean
+    @StepScope
+    public FlatFileItemWriter<Student> writer(@Value("#{jobParameters['outputFile']}") String outputFile, StepExecution stepExecution) {
+        String originalFileName = stepExecution.getJobExecution().getExecutionContext().getString("originalFileName", "unknown.txt");
+
+        return new FlatFileItemWriterBuilder<Student>()
+                .name("studentItemWriter")
+                .resource(new FileSystemResource(outputFile))
+                .headerCallback(writer -> writer.write("# Processed from: " + originalFileName))
+                .lineAggregator(student -> student.getName() + "," + student.getEmail() + "," + student.getScore())
+                .build();
+    }
+
+    @Bean
+    public Step step1(@Value("#{jobParameters['chunkSize']}") String chunkSizeStr) {
+        return stepBuilderFactory.get("step1")
+                .<Student, Student>chunk(Integer.parseInt(chunkSizeStr != null ? chunkSizeStr : "10"))
+                .reader(reader(null, null, null))
+                .processor(processor())
+                .writer(writer(null, null))
+                .build();
+    }
+
+    @Bean
+    public Job importStudentJob(@Autowired(required = false) JobExecutionListener externalListener, JobCompletionNotificationListener listener) {
+        return jobBuilderFactory.get("importStudentJob")
+                .incrementer(new RunIdIncrementer())
+                .listener(externalListener != null ? externalListener : listener)
+                .flow(step1(null))
+                .end()
+                .build();
     }
 }
 
-
-class DelayedCacheKey<K> implements Delayed {
-    private final K key;
-    private final long expiryTime;
-
-    DelayedCacheKey(K key, long delayMillis) {
-        this.key = key;
-        this.expiryTime = System.currentTimeMillis() + delayMillis;
-    }
-
-    public long getDelay(TimeUnit unit) {
-        return unit.convert(expiryTime - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
-    }
-
-    public int compareTo(Delayed other) {
-        return Long.compare(this.expiryTime, ((DelayedCacheKey<?>) other).expiryTime);
-    }
-
-    public K getKey() {
-        return key;
+// 4. Job Completion Listener
+@Component
+public class JobCompletionNotificationListener extends JobExecutionListenerSupport {
+    @Override
+    public void afterJob(JobExecution jobExecution) {
+        if (jobExecution.getStatus() == BatchStatus.COMPLETED) {
+            System.out.println("BATCH JOB COMPLETED SUCCESSFULLY");
+        }
     }
 }
 
-public class TTLSizeBoundCache<K, V> {
-    private final int maxSize;
-    private final long defaultTTL;
-    private final ConcurrentHashMap<K, CacheEntry<V>> map = new ConcurrentHashMap<>();
-    private final DelayQueue<DelayedCacheKey<K>> expiryQueue = new DelayQueue<>();
+// 5. Teacher Entity
+@Entity
+public class Teacher {
+    @Id @GeneratedValue
+    private Long id;
+    private String name;
+    private String subject;
+    private int experience;
+    // Getters, Setters, Constructors
+}
 
-    public TTLSizeBoundCache(int maxSize, long defaultTTL) {
-        this.maxSize = maxSize;
-        this.defaultTTL = defaultTTL;
-        startExpiryThread();
+// 6. CommandLineRunner to Launch Job
+@SpringBootApplication
+public class BatchApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(BatchApplication.class, args);
     }
 
-    public void put(K key, V value) {
-        if (map.size() >= maxSize) {
-            evictOne();
-        }
-        map.put(key, new CacheEntry<>(value, defaultTTL));
-        expiryQueue.put(new DelayedCacheKey<>(key, defaultTTL));
-    }
-
-    public V get(K key) {
-        CacheEntry<V> entry = map.get(key);
-        if (entry == null || entry.isExpired()) {
-            map.remove(key);
-            return null;
-        }
-        return entry.value;
-    }
-
-    private void evictOne() {
-        Iterator<K> iter = map.keySet().iterator();
-        if (iter.hasNext()) {
-            map.remove(iter.next());
-        }
-    }
-
-    private void startExpiryThread() {
-        Thread cleaner = new Thread(() -> {
-            while (true) {
-                try {
-                    DelayedCacheKey<K> expiredKey = expiryQueue.take();
-                    map.remove(expiredKey.getKey());
-                } catch (InterruptedException ignored) {}
+    @Bean
+    CommandLineRunner run(JobLauncher jobLauncher, JobFactory jobFactory, JobCompletionNotificationListener defaultListener) {
+        return args -> {
+            if (args.length < 4) {
+                System.err.println("Usage: <inputFile> <outputFile> <chunkSize> <linesToSkip>");
+                return;
             }
-        });
-        cleaner.setDaemon(true);
-        cleaner.start();
+            JobParameters params = new JobParametersBuilder()
+                    .addString("inputFile", args[0])
+                    .addString("outputFile", args[1])
+                    .addString("chunkSize", args[2])
+                    .addString("linesToSkip", args[3])
+                    .addLong("time", System.currentTimeMillis())
+                    .toJobParameters();
+            String jobType = System.getProperty("jobType", "student");
+            Job job = jobFactory.getJob(jobType, defaultListener);
+            jobLauncher.run(job, params);
+        };
     }
 }
