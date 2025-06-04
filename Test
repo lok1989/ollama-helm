@@ -1,31 +1,12 @@
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
+-- Drop tables in the correct dependency order
+DROP TABLE HC_BATCH_STEP_EXECUTION_CONTEXT CASCADE CONSTRAINTS;
+DROP TABLE HC_BATCH_JOB_EXECUTION_CONTEXT CASCADE CONSTRAINTS;
+DROP TABLE HC_BATCH_STEP_EXECUTION CASCADE CONSTRAINTS;
+DROP TABLE HC_BATCH_JOB_EXECUTION_PARAMS CASCADE CONSTRAINTS;
+DROP TABLE HC_BATCH_JOB_EXECUTION CASCADE CONSTRAINTS;
+DROP TABLE HC_BATCH_JOB_INSTANCE CASCADE CONSTRAINTS;
 
-import javax.sql.DataSource;
-import oracle.jdbc.pool.OracleDataSource;
-import java.sql.SQLException;
-
-@Configuration
-public class OracleDataSourceConfig {
-
-    @Value("${spring.datasource.url}")
-    private String jdbcUrl;
-
-    @Value("${spring.datasource.username}")
-    private String username;
-
-    @Value("${spring.datasource.password}")
-    private String password;
-
-    @Bean
-    @Primary // This ensures Spring uses your DataSource over the default auto-configured one
-    public DataSource dataSource() throws SQLException {
-        OracleDataSource dataSource = new OracleDataSource();
-        dataSource.setURL(jdbcUrl);
-        dataSource.setUser(username);
-        dataSource.setPassword(password);
-        return dataSource;
-    }
-}
+-- Drop sequences
+DROP SEQUENCE HC_BATCH_STEP_EXECUTION_SEQ;
+DROP SEQUENCE HC_BATCH_JOB_EXECUTION_SEQ;
+DROP SEQUENCE HC_BATCH_JOB_SEQ;
