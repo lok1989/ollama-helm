@@ -1,230 +1,80 @@
-/*
- * Updated Project: Spring Batch Distributed File Processor
- *
- * Java Imports
- */
+CREATE TABLE HC_BATCH_JOB_INSTANCE (
+    JOB_INSTANCE_ID NUMBER(19,0) NOT NULL PRIMARY KEY,
+    VERSION NUMBER(19,0),
+    JOB_NAME VARCHAR2(100 CHAR) NOT NULL,
+    JOB_KEY VARCHAR2(32 CHAR) NOT NULL,
+    CONSTRAINT HC_JOB_INST_UN UNIQUE (JOB_NAME, JOB_KEY)
+);
 
-import org.springframework.batch.core.*;
-import org.springframework.batch.core.configuration.annotation.*;
-import org.springframework.batch.core.job.builder.JobBuilder;
-import org.springframework.batch.core.job.builder.JobBuilderHelper;
-import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.batch.core.listener.JobExecutionListenerSupport;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.repository.support.JobRepositoryFactoryBean;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.*;
-import org.springframework.batch.item.file.*;
-import org.springframework.batch.item.file.builder.*;
-import org.springframework.batch.item.file.mapping.*;
-import org.springframework.batch.item.file.transform.*;
-import org.springframework.beans.factory.annotation.*;
-import org.springframework.boot.*;
-import org.springframework.boot.autoconfigure.*;
-import org.springframework.context.*;
-import org.springframework.context.annotation.*;
-import org.springframework.core.io.*;
-import org.springframework.jdbc.datasource.*;
-import org.springframework.stereotype.*;
+CREATE TABLE HC_BATCH_JOB_EXECUTION (
+    JOB_EXECUTION_ID NUMBER(19,0) NOT NULL PRIMARY KEY,
+    VERSION NUMBER(19,0),
+    JOB_INSTANCE_ID NUMBER(19,0) NOT NULL,
+    CREATE_TIME TIMESTAMP NOT NULL,
+    START_TIME TIMESTAMP,
+    END_TIME TIMESTAMP,
+    STATUS VARCHAR2(10 CHAR),
+    EXIT_CODE VARCHAR2(2500 CHAR),
+    EXIT_MESSAGE CLOB,
+    LAST_UPDATED TIMESTAMP,
+    JOB_CONFIGURATION_LOCATION VARCHAR2(2500 CHAR),
+    CONSTRAINT HC_JOB_INST_EXEC_FK FOREIGN KEY (JOB_INSTANCE_ID)
+        REFERENCES HC_BATCH_JOB_INSTANCE(JOB_INSTANCE_ID)
+);
 
-import javax.persistence.*;
-import javax.sql.*;
+CREATE TABLE HC_BATCH_JOB_EXECUTION_PARAMS (
+    JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
+    TYPE_CD VARCHAR2(6 CHAR) NOT NULL,
+    KEY_NAME VARCHAR2(100 CHAR) NOT NULL,
+    STRING_VAL VARCHAR2(250 CHAR),
+    DATE_VAL TIMESTAMP,
+    LONG_VAL NUMBER(19,0),
+    DOUBLE_VAL NUMBER,
+    IDENTIFYING CHAR(1) NOT NULL,
+    CONSTRAINT HC_JOB_EXEC_PARAMS_FK FOREIGN KEY (JOB_EXECUTION_ID)
+        REFERENCES HC_BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
+);
 
-import java.nio.file.*;
-import java.util.*;
- * Technologies: Spring Boot, Spring Batch, Oracle, Kafka (optional)
- */
+CREATE TABLE HC_BATCH_STEP_EXECUTION (
+    STEP_EXECUTION_ID NUMBER(19,0) NOT NULL PRIMARY KEY,
+    VERSION NUMBER(19,0) NOT NULL,
+    STEP_NAME VARCHAR2(100 CHAR) NOT NULL,
+    JOB_EXECUTION_ID NUMBER(19,0) NOT NULL,
+    START_TIME TIMESTAMP NOT NULL,
+    END_TIME TIMESTAMP,
+    STATUS VARCHAR2(10 CHAR),
+    COMMIT_COUNT NUMBER(19,0),
+    READ_COUNT NUMBER(19,0),
+    FILTER_COUNT NUMBER(19,0),
+    WRITE_COUNT NUMBER(19,0),
+    READ_SKIP_COUNT NUMBER(19,0),
+    WRITE_SKIP_COUNT NUMBER(19,0),
+    PROCESS_SKIP_COUNT NUMBER(19,0),
+    ROLLBACK_COUNT NUMBER(19,0),
+    EXIT_CODE VARCHAR2(2500 CHAR),
+    EXIT_MESSAGE CLOB,
+    LAST_UPDATED TIMESTAMP,
+    CONSTRAINT HC_JOB_EXEC_STEP_FK FOREIGN KEY (JOB_EXECUTION_ID)
+        REFERENCES HC_BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
+);
 
-// 1. Student Entity
-@Entity
-public class Student {
-    @Id @GeneratedValue
-    private Long id;
-    private String name;
-    private String email;
-    private int score;
-    // Getters, Setters, Constructors
-}
+CREATE TABLE HC_BATCH_STEP_EXECUTION_CONTEXT (
+    STEP_EXECUTION_ID NUMBER(19,0) NOT NULL PRIMARY KEY,
+    SHORT_CONTEXT VARCHAR2(2500 CHAR) NOT NULL,
+    SERIALIZED_CONTEXT CLOB,
+    CONSTRAINT HC_STEP_EXEC_CTX_FK FOREIGN KEY (STEP_EXECUTION_ID)
+        REFERENCES HC_BATCH_STEP_EXECUTION(STEP_EXECUTION_ID)
+);
 
-// 2. Student Repository
-public interface StudentRepository extends JpaRepository<Student, Long> {}
+CREATE TABLE HC_BATCH_JOB_EXECUTION_CONTEXT (
+    JOB_EXECUTION_ID NUMBER(19,0) NOT NULL PRIMARY KEY,
+    SHORT_CONTEXT VARCHAR2(2500 CHAR) NOT NULL,
+    SERIALIZED_CONTEXT CLOB,
+    CONSTRAINT HC_JOB_EXEC_CTX_FK FOREIGN KEY (JOB_EXECUTION_ID)
+        REFERENCES HC_BATCH_JOB_EXECUTION(JOB_EXECUTION_ID)
+);
 
-// 3. Batch Configuration
-
-// Job Factory to provide multiple job definitions
-@Component
-public class JobFactory {
-
-    @Autowired
-    private ApplicationContext context;
-
-    @Autowired
-    private JobBuilderFactory jobBuilderFactory;
-
-    @Autowired
-    private Step studentStep;
-
-    @Autowired
-    private Step teacherStep;
-
-    public Job getJob(String jobType, JobExecutionListener listener) {
-        if ("student".equalsIgnoreCase(jobType)) {
-            return jobBuilderFactory.get("importStudentJob")
-                    .incrementer(new RunIdIncrementer())
-                    .listener(listener)
-                    .flow(studentStep)
-                    .end()
-                    .build();
-        } else if ("teacher".equalsIgnoreCase(jobType)) {
-            return jobBuilderFactory.get("importTeacherJob")
-                    .incrementer(new RunIdIncrementer())
-                    .listener(listener)
-                    .flow(teacherStep)
-                    .end()
-                    .build();
-        } else {
-            throw new IllegalArgumentException("Unknown job type: " + jobType);
-        }
-    }
-}
-@Configuration
-@EnableBatchProcessing
-public class BatchConfig extends DefaultBatchConfigurer {
-
-    @Autowired
-    private JobBuilderFactory jobBuilderFactory;
-
-    @Autowired
-    private StepBuilderFactory stepBuilderFactory;
-
-    @Autowired
-    private DataSource dataSource;
-
-    @Override
-    public void setDataSource(DataSource dataSource) {
-        super.setDataSource(dataSource);
-    }
-
-    @Override
-    protected JobRepository createJobRepository() throws Exception {
-        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
-        factory.setDataSource(dataSource);
-        factory.setTransactionManager(new ResourcelessTransactionManager());
-        factory.setTablePrefix("HC_");
-        factory.afterPropertiesSet();
-        return factory.getObject();
-    }
-
-    @Bean
-    @StepScope
-    public FlatFileItemReader<Student> reader(
-            @Value("#{jobParameters['inputFile']}") String inputFile,
-            @Value("#{jobParameters['linesToSkip']}") Integer linesToSkip,
-            StepExecution stepExecution) {
-
-        ExecutionContext context = stepExecution.getJobExecution().getExecutionContext();
-        context.putString("originalFileName", Paths.get(inputFile).getFileName().toString());
-
-        return new FlatFileItemReaderBuilder<Student>()
-                .name("studentItemReader")
-                .resource(new FileSystemResource(inputFile))
-                .linesToSkip(linesToSkip != null ? linesToSkip : 0)
-                .lineMapper((line, lineNumber) -> {
-                    String[] fields = line.split(",");
-                    return new Student(null, fields[0], fields[1], Integer.parseInt(fields[2]));
-                })
-                .build();
-    }
-
-    @Bean
-    public ItemProcessor<Student, Student> processor() {
-        return student -> {
-            student.setName(student.getName().toUpperCase());
-            return student;
-        };
-    }
-
-    @Bean
-    @StepScope
-    public FlatFileItemWriter<Student> writer(@Value("#{jobParameters['outputFile']}") String outputFile, StepExecution stepExecution) {
-        String originalFileName = stepExecution.getJobExecution().getExecutionContext().getString("originalFileName", "unknown.txt");
-
-        return new FlatFileItemWriterBuilder<Student>()
-                .name("studentItemWriter")
-                .resource(new FileSystemResource(outputFile))
-                .headerCallback(writer -> writer.write("# Processed from: " + originalFileName))
-                .lineAggregator(student -> student.getName() + "," + student.getEmail() + "," + student.getScore())
-                .build();
-    }
-
-    @Bean
-    public Step step1(@Value("#{jobParameters['chunkSize']}") String chunkSizeStr) {
-        return stepBuilderFactory.get("step1")
-                .<Student, Student>chunk(Integer.parseInt(chunkSizeStr != null ? chunkSizeStr : "10"))
-                .reader(reader(null, null, null))
-                .processor(processor())
-                .writer(writer(null, null))
-                .build();
-    }
-
-    @Bean
-    public Job importStudentJob(@Autowired(required = false) JobExecutionListener externalListener, JobCompletionNotificationListener listener) {
-        return jobBuilderFactory.get("importStudentJob")
-                .incrementer(new RunIdIncrementer())
-                .listener(externalListener != null ? externalListener : listener)
-                .flow(step1(null))
-                .end()
-                .build();
-    }
-}
-
-// 4. Job Completion Listener
-@Component
-public class JobCompletionNotificationListener extends JobExecutionListenerSupport {
-    @Override
-    public void afterJob(JobExecution jobExecution) {
-        if (jobExecution.getStatus() == BatchStatus.COMPLETED) {
-            System.out.println("BATCH JOB COMPLETED SUCCESSFULLY");
-        }
-    }
-}
-
-// 5. Teacher Entity
-@Entity
-public class Teacher {
-    @Id @GeneratedValue
-    private Long id;
-    private String name;
-    private String subject;
-    private int experience;
-    // Getters, Setters, Constructors
-}
-
-// 6. CommandLineRunner to Launch Job
-@SpringBootApplication
-public class BatchApplication {
-
-    public static void main(String[] args) {
-        SpringApplication.run(BatchApplication.class, args);
-    }
-
-    @Bean
-    CommandLineRunner run(JobLauncher jobLauncher, JobFactory jobFactory, JobCompletionNotificationListener defaultListener) {
-        return args -> {
-            if (args.length < 4) {
-                System.err.println("Usage: <inputFile> <outputFile> <chunkSize> <linesToSkip>");
-                return;
-            }
-            JobParameters params = new JobParametersBuilder()
-                    .addString("inputFile", args[0])
-                    .addString("outputFile", args[1])
-                    .addString("chunkSize", args[2])
-                    .addString("linesToSkip", args[3])
-                    .addLong("time", System.currentTimeMillis())
-                    .toJobParameters();
-            String jobType = System.getProperty("jobType", "student");
-            Job job = jobFactory.getJob(jobType, defaultListener);
-            jobLauncher.run(job, params);
-        };
-    }
-}
+-- Sequences
+CREATE SEQUENCE HC_BATCH_JOB_SEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE HC_BATCH_JOB_EXECUTION_SEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE HC_BATCH_STEP_EXECUTION_SEQ START WITH 1 INCREMENT BY 1;
