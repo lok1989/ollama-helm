@@ -1,67 +1,57 @@
-@Bean
-public FlatFileItemReader<ExtendedTransaction> extendedTransactionReader() {
-    FlatFileItemReader<ExtendedTransaction> reader = new FlatFileItemReader<>();
-    reader.setResource(new ClassPathResource("input.csv"));
-    reader.setLinesToSkip(1);
+@Component
+public class ErrorFileSkipListener implements SkipListener<ExtendedTransaction, Object>, StepExecutionListener {
 
-    DefaultLineMapper<ExtendedTransaction> lineMapper = new DefaultLineMapper<>();
-
-    DelimitedLineTokenizer tokenizer = new DelimitedLineTokenizer();
-    tokenizer.setNames(
-        "requestId", "cusip", "finalCustMnc", "gpName", "gfcId", "gpNum", 
-        "finalFirmMnc", "transType", "businessDate", "finalMaturity", 
-        "endDate", "settleDate", "utiuid"
-    );
-
-    lineMapper.setLineTokenizer(tokenizer);
-    lineMapper.setFieldSetMapper(new ExtendedTransactionFieldSetMapper());
-
-    reader.setLineMapper(lineMapper);
-    return reader;
-}
-
-
-
-
-import org.springframework.batch.item.file.mapping.FieldSetMapper;
-import org.springframework.batch.item.file.transform.FieldSet;
-import org.springframework.validation.BindException;
-
-import java.text.SimpleDateFormat;
-import java.util.Date;
-
-public class ExtendedTransactionFieldSetMapper implements FieldSetMapper<ExtendedTransaction> {
-
-    private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+    private BufferedWriter writer;
+    private String inputFileName;
 
     @Override
-    public ExtendedTransaction mapFieldSet(FieldSet fieldSet) throws BindException {
-        ExtendedTransaction tx = new ExtendedTransaction();
-
-        tx.setRequestId(fieldSet.readInt("requestId"));
-        tx.setCusip(fieldSet.readString("cusip"));
-        tx.setFinalCustMnc(fieldSet.readString("finalCustMnc"));
-        tx.setGpName(fieldSet.readString("gpName"));
-        tx.setGfcId(fieldSet.readString("gfcId"));
-        tx.setGpNum(fieldSet.readString("gpNum"));
-        tx.setFinalFirmMnc(fieldSet.readString("finalFirmMnc"));
-        tx.setTransType(fieldSet.readString("transType"));
-
-        tx.setBusinessDate(parseDate(fieldSet.readString("businessDate")));
-        tx.setFinalMaturity(parseDate(fieldSet.readString("finalMaturity")));
-        tx.setEndDate(parseDate(fieldSet.readString("endDate")));
-        tx.setSettleDate(parseDate(fieldSet.readString("settleDate")));
-
-        tx.setUtiuid(fieldSet.readString("utiuid"));
-
-        return tx;
+    public void beforeStep(StepExecution stepExecution) {
+        inputFileName = stepExecution.getJobParameters().getString("inputFile");
+        if (inputFileName != null) {
+            String baseName = inputFileName.replaceFirst("\\.csv$", "");
+            String errorFileName = baseName + "a.err";
+            try {
+                writer = new BufferedWriter(new FileWriter(errorFileName, true));
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to open error file: " + errorFileName, e);
+            }
+        }
     }
 
-    private Date parseDate(String dateStr) {
-        try {
-            return dateFormat.parse(dateStr);
-        } catch (Exception e) {
-            return null; // or handle error
+    @Override
+    public void onSkipInRead(Throwable t) {
+        // Could log generic info here if needed
+    }
+
+    @Override
+    public void onSkipInProcess(ExtendedTransaction item, Throwable t) {
+        logSkip(item.getRequestId(), "process", t.getMessage());
+    }
+
+    @Override
+    public void onSkipInWrite(Object item, Throwable t) {
+        if (item instanceof ExtendedTransaction tx) {
+            logSkip(tx.getRequestId(), "write", t.getMessage());
         }
+    }
+
+    private void logSkip(int requestId, String phase, String reason) {
+        try {
+            writer.write("Record ID " + requestId + " is skipped during " + phase + " due to: " + reason);
+            writer.newLine();
+            writer.flush();
+        } catch (IOException e) {
+            System.err.println("❌ Failed to write to error file: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public ExitStatus afterStep(StepExecution stepExecution) {
+        try {
+            if (writer != null) writer.close();
+        } catch (IOException e) {
+            System.err.println("⚠️ Failed to close error file writer: " + e.getMessage());
+        }
+        return ExitStatus.COMPLETED;
     }
 }
