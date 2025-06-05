@@ -1,35 +1,67 @@
--- Drop tables in the correct dependency order
-DROP TABLE HC_BATCH_STEP_EXECUTION_CONTEXT CASCADE CONSTRAINTS;
-DROP TABLE HC_BATCH_JOB_EXECUTION_CONTEXT CASCADE CONSTRAINTS;
-DROP TABLE HC_BATCH_STEP_EXECUTION CASCADE CONSTRAINTS;
-DROP TABLE HC_BATCH_JOB_EXECUTION_PARAMS CASCADE CONSTRAINTS;
-DROP TABLE HC_BATCH_JOB_EXECUTION CASCADE CONSTRAINTS;
-DROP TABLE HC_BATCH_JOB_INSTANCE CASCADE CONSTRAINTS;
+@Bean
+public FlatFileItemReader<ExtendedTransaction> extendedTransactionReader() {
+    FlatFileItemReader<ExtendedTransaction> reader = new FlatFileItemReader<>();
+    reader.setResource(new ClassPathResource("input.csv"));
+    reader.setLinesToSkip(1);
 
--- Drop sequences
-DROP SEQUENCE HC_BATCH_STEP_EXECUTION_SEQ;
-DROP SEQUENCE HC_BATCH_JOB_EXECUTION_SEQ;
-DROP SEQUENCE HC_BATCH_JOB_SEQ;
+    DefaultLineMapper<ExtendedTransaction> lineMapper = new DefaultLineMapper<>();
+
+    DelimitedLineTokenizer tokenizer = new DelimitedLineTokenizer();
+    tokenizer.setNames(
+        "requestId", "cusip", "finalCustMnc", "gpName", "gfcId", "gpNum", 
+        "finalFirmMnc", "transType", "businessDate", "finalMaturity", 
+        "endDate", "settleDate", "utiuid"
+    );
+
+    lineMapper.setLineTokenizer(tokenizer);
+    lineMapper.setFieldSetMapper(new ExtendedTransactionFieldSetMapper());
+
+    reader.setLineMapper(lineMapper);
+    return reader;
+}
 
 
 
-spring:
-  datasource:
-    url: jdbc:h2:file:./data/pacman-db;DB_CLOSE_ON_EXIT=FALSE;AUTO_SERVER=TRUE
-    username: sa
-    password:
-    driver-class-name: org.h2.Driver
 
-  jpa:
-    database-platform: org.hibernate.dialect.H2Dialect
-    properties:
-      hibernate:
-        default_schema: USERS
+import org.springframework.batch.item.file.mapping.FieldSetMapper;
+import org.springframework.batch.item.file.transform.FieldSet;
+import org.springframework.validation.BindException;
 
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
-batch:
-  initialize-schema: never
+public class ExtendedTransactionFieldSetMapper implements FieldSetMapper<ExtendedTransaction> {
+
+    private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+    @Override
+    public ExtendedTransaction mapFieldSet(FieldSet fieldSet) throws BindException {
+        ExtendedTransaction tx = new ExtendedTransaction();
+
+        tx.setRequestId(fieldSet.readInt("requestId"));
+        tx.setCusip(fieldSet.readString("cusip"));
+        tx.setFinalCustMnc(fieldSet.readString("finalCustMnc"));
+        tx.setGpName(fieldSet.readString("gpName"));
+        tx.setGfcId(fieldSet.readString("gfcId"));
+        tx.setGpNum(fieldSet.readString("gpNum"));
+        tx.setFinalFirmMnc(fieldSet.readString("finalFirmMnc"));
+        tx.setTransType(fieldSet.readString("transType"));
+
+        tx.setBusinessDate(parseDate(fieldSet.readString("businessDate")));
+        tx.setFinalMaturity(parseDate(fieldSet.readString("finalMaturity")));
+        tx.setEndDate(parseDate(fieldSet.readString("endDate")));
+        tx.setSettleDate(parseDate(fieldSet.readString("settleDate")));
+
+        tx.setUtiuid(fieldSet.readString("utiuid"));
+
+        return tx;
+    }
+
+    private Date parseDate(String dateStr) {
+        try {
+            return dateFormat.parse(dateStr);
+        } catch (Exception e) {
+            return null; // or handle error
+        }
+    }
+}
