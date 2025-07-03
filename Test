@@ -1,5 +1,33 @@
-I hope you’re doing well. I would like to formally request leave from July 20th to August 9th, as I have planned a personal trip to visit my family in India during that period.
 
-Please let me know if any adjustments are needed to ensure smooth handover and coverage while I’m away. I will make sure all pending work is up to date before my departure and will coordinate with the team as needed.
+insert_job: file_pattern_watch       /* Name of the file watcher job */
+job_type: F                          /* Job type 'F' = File Watcher */
+watch_file: /path/to/your/dir/*.csv  /* File pattern to watch (.csv files in target dir) */
+watch_interval: 60                   /* Check every 60 seconds for new files */
+watch_criteria: C                    /* 'C' = Created (trigger only on new file creation) */
+owner: youruser@yourhost             /* OS user and machine that runs the job */
+permission: gx,wx                    /* Execution and write permissions for group and others */
+description: "Watches for new .csv files in directory"  /* Human-readable job description */
+alarm_if_fail: 1                     /* Raise an alert if the job fails */
 
-Thank you for considering my request. I look forward to your approval.
+insert_job: process_file_script      /* Name of the command job */
+job_type: c                          /* Job type 'c' = command job (runs a shell command) */
+command: /path/to/your/script.sh     /* Full path to the shell script to run */
+machine: yourhost                    /* Host machine where the job runs */
+owner: youruser@yourhost             /* User that executes the script */
+permission: gx,wx                    /* Execution and write permissions */
+description: "Runs script when new file is detected"    /* Description for reference */
+alarm_if_fail: 1                     /* Raise alarm if job fails */
+condition: success(file_pattern_watch)  /* Only run if file watcher job succeeded */
+
+insert_job: file_watch_box           /* A box job that groups the watcher and script */
+job_type: b                          /* Job type 'b' = box */
+box_success: all_success             /* Box is successful only if all inner jobs succeed */
+owner: youruser@yourhost             /* Same user as above */
+permission: gx,wx                    /* Permissions for box job */
+description: "Box job that links watcher to script trigger" /* Optional but useful */
+
+insert_job: file_pattern_watch       /* Re-inserting the same watcher job into the box */
+box_name: file_watch_box             /* Associates this job with the box */
+
+insert_job: process_file_script      /* Re-inserting the same command job into the box */
+box_name: file_watch_box             /* Associates this job with the box */
