@@ -1,33 +1,60 @@
+#!/bin/ksh
 
-insert_job: file_pattern_watch       /* Name of the file watcher job */
-job_type: F                          /* Job type 'F' = File Watcher */
-watch_file: /path/to/your/dir/*.csv  /* File pattern to watch (.csv files in target dir) */
-watch_interval: 60                   /* Check every 60 seconds for new files */
-watch_criteria: C                    /* 'C' = Created (trigger only on new file creation) */
-owner: youruser@yourhost             /* OS user and machine that runs the job */
-permission: gx,wx                    /* Execution and write permissions for group and others */
-description: "Watches for new .csv files in directory"  /* Human-readable job description */
-alarm_if_fail: 1                     /* Raise an alert if the job fails */
+# Validate PROFILE is passed
+if [[ -z "$PROFILE" ]]; then
+  echo "ERROR: PROFILE environment variable not set. Must be 'UAT' or 'PROD'."
+  exit 1
+fi
 
-insert_job: process_file_script      /* Name of the command job */
-job_type: c                          /* Job type 'c' = command job (runs a shell command) */
-command: /path/to/your/script.sh     /* Full path to the shell script to run */
-machine: yourhost                    /* Host machine where the job runs */
-owner: youruser@yourhost             /* User that executes the script */
-permission: gx,wx                    /* Execution and write permissions */
-description: "Runs script when new file is detected"    /* Description for reference */
-alarm_if_fail: 1                     /* Raise alarm if job fails */
-condition: success(file_pattern_watch)  /* Only run if file watcher job succeeded */
+# Directory to scan
+OUTGOING_DIR="/data/outgoing"
 
-insert_job: file_watch_box           /* A box job that groups the watcher and script */
-job_type: b                          /* Job type 'b' = box */
-box_success: all_success             /* Box is successful only if all inner jobs succeed */
-owner: youruser@yourhost             /* Same user as above */
-permission: gx,wx                    /* Permissions for box job */
-description: "Box job that links watcher to script trigger" /* Optional but useful */
+# Path to SSH private key (update as needed)
+KEY_PATH="$HOME/.ssh/id_rsa"
 
-insert_job: file_pattern_watch       /* Re-inserting the same watcher job into the box */
-box_name: file_watch_box             /* Associates this job with the box */
+# Initialize environment-specific destination map
+typeset -A DEST_MAP
 
-insert_job: process_file_script      /* Re-inserting the same command job into the box */
-box_name: file_watch_box             /* Associates this job with the box */
+if [[ "$PROFILE" == "UAT" ]]; then
+  DEST_MAP["INV_"]="uat_user1@sftp.uat-acme.com"
+  DEST_MAP["PAY_"]="uat_user2@sftp.uat-beta.com"
+  DEST_MAP["LOG_"]="uat_user3@sftp.uat-gamma.com"
+
+elif [[ "$PROFILE" == "PROD" ]]; then
+  DEST_MAP["INV_"]="prod_user1@sftp.prod-acme.com"
+  DEST_MAP["PAY_"]="prod_user2@sftp.prod-beta.com"
+  DEST_MAP["LOG_"]="prod_user3@sftp.prod-gamma.com"
+
+else
+  echo "ERROR: Invalid PROFILE '$PROFILE'. Expected 'UAT' or 'PROD'."
+  exit 2
+fi
+
+# Process each file in the outgoing folder
+for FILE in "$OUTGOING_DIR"/*; do
+  BASENAME=$(basename "$FILE")
+  SENT=0
+
+  for PATTERN in "${!DEST_MAP[@]}"; do
+    if [[ "$BASENAME" == ${PATTERN}* ]]; then
+      DEST="${DEST_MAP[$PATTERN]}"
+      echo "[$PROFILE] Transferring $BASENAME to $DEST..."
+
+      sftp -i "$KEY_PATH" "$DEST" <<EOF
+put "$FILE"
+EOF
+
+      if [[ $? -eq 0 ]]; then
+        echo "[$PROFILE] Successfully transferred $BASENAME to $DEST"
+        SENT=1
+        break
+      else
+        echo "[$PROFILE] ERROR transferring $BASENAME to $DEST"
+      fi
+    fi
+  done
+
+  if [[ $SENT -eq 0 ]]; then
+    echo "[$PROFILE] No matching pattern for $BASENAME. Skipping."
+  fi
+done
