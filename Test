@@ -85,7 +85,7 @@ if (request.getFilters() != null && request.getFilters().length > 0) {
 }
 
 // Build the final SQL query
-String sql = "SELECT * FROM ARCHIVE.RICH_SETT_LADDER_POSITION_CACHE" +
+String sql = "SELECT * FROM ARCHIVE." +
              whereClause +
              " LIMIT " + request.getPageSize() +
              " OFFSET " + (request.getPage() * request.getPageSize());
