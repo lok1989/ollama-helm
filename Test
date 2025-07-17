@@ -135,3 +135,23 @@ SqlFieldsQuery query = new SqlFieldsQuery(sql);
         // Trim trailing space
         return formattedName.toString().trim();
     }
+
+
+
+# Define archive directory
+ARCHIVE_DIR="$OUTGOING_DIR/archive"
+
+# Create archive folder if it doesn't exist
+[[ -d "$ARCHIVE_DIR" ]] || mkdir -p "$ARCHIVE_DIR"
+
+# Inside your file processing loop, after successful transfer:
+if [[ $EXIT_CODE -eq 0 ]]; then
+  echo "[$(timestamp)] [$PROFILE] SUCCESS: $BASENAME transferred to $DEST_HOST:$DEST_DIR"
+  
+  # Move file to archive
+  mv "$FILE" "$ARCHIVE_DIR/"
+  echo "[$(timestamp)] [$PROFILE] Moved $BASENAME to archive folder $ARCHIVE_DIR"
+  
+  SENT=1
+  break
+fi
