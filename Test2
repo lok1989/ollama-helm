@@ -1,0 +1,60 @@
+Method 1 : Direct Upsert
+
+new input data
+     ↓
+upsert into product_invenotry_retail
+
+
+Method 2 : Three Collection solution recommended by Grok
+new input data
+     ↓
+load into → [new_product_invenotry_retail] (Insert)
+     ↓                          ↓
+compare IDs → product_invenotry_retail -> [previous_product_invenotry_retail] (Copy. Will be a Huge lookup)
+     ↓                          ↓
+update / insert → product_invenotry_retail (Copy, This step will again do a full insert)
+
+
+Method 3 : Use Mongo Aggregation
+new input data
+     ↓
+load into → [stage_product]
+     ↓
+$lookup + update → [product]  (in-place)
+
+
+db.old_collection.aggregate([
+  {
+    $lookup: {
+      from: "new_collection",
+      let: {
+        upc: "$upc",
+        country: "$country",
+        storeNumber: "$storeNumber"
+      },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $eq: ["$upc", "$$upc"] },
+                { $eq: ["$country", "$$country"] },
+                { $eq: ["$storeNumber", "$$storeNumber"] }
+              ]
+            }
+          }
+        }
+      ],
+      as: "matched"
+    }
+  },
+  {
+    $match: {
+      matched: { $eq: [] } // No match in new_collection
+    }
+  },
+  {
+    $project: { _id: 1 } // Return only the _id
+  }
+]);
+
