@@ -111,3 +111,29 @@ String sql = "SELECT * FROM ARCHIVE." +
              " OFFSET " + (request.getPage() * request.getPageSize());
 
 SqlFieldsQuery query = new SqlFieldsQuery(sql);
+===========================
+
+
+
+  public static String formatName(String input) {
+        if (input == null || input.isEmpty()) {
+            return input;
+        }
+
+        // Split the string by underscores
+        String[] parts = input.toLowerCase().split("_");
+        StringBuilder formattedName = new StringBuilder();
+
+        for (String part : parts) {
+            if (!part.isEmpty()) {
+                // Capitalize the first letter of each part and append to the result
+                formattedName
+                    .append(Character.toUpperCase(part.charAt(0)))
+                    .append(part.substring(1))
+                    .append(" ");
+            }
+        }
+
+        // Trim trailing space
+        return formattedName.toString().trim();
+    }
