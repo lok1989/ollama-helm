@@ -12,9 +12,6 @@ OUTGOING_DIR="/data/outgoing"
 # Path to SSH private key
 KEY_PATH="$HOME/.ssh/id_rsa"
 
-# Log file
-LOG_FILE="/var/log/sftp_transfer_${PROFILE,,}.log"
-
 # Initialize destination map with user@host|remote_path
 typeset -A DEST_MAP
 
@@ -40,7 +37,7 @@ timestamp() {
 
 # Process each file
 for FILE in "$OUTGOING_DIR"/*; do
-  [[ -f "$FILE" ]] || continue  # Skip if not a regular file
+  [[ -f "$FILE" ]] || continue  # Skip non-regular files
   BASENAME=$(basename "$FILE")
   SENT=0
 
@@ -50,7 +47,7 @@ for FILE in "$OUTGOING_DIR"/*; do
       DEST_HOST=$(echo "$DEST_INFO" | cut -d'|' -f1)
       DEST_DIR=$(echo "$DEST_INFO" | cut -d'|' -f2)
 
-      echo "[$(timestamp)] [$PROFILE] Transferring $BASENAME to $DEST_HOST:$DEST_DIR..." | tee -a "$LOG_FILE"
+      echo "[$(timestamp)] [$PROFILE] Transferring $BASENAME to $DEST_HOST:$DEST_DIR..."
 
       SFTP_OUTPUT=$(sftp -i "$KEY_PATH" "$DEST_HOST" 2>&1 <<EOF
 cd "$DEST_DIR"
@@ -60,22 +57,23 @@ EOF
       EXIT_CODE=$?
 
       if [[ $EXIT_CODE -eq 0 ]]; then
-        echo "[$(timestamp)] [$PROFILE] SUCCESS: $BASENAME transferred to $DEST_HOST:$DEST_DIR" | tee -a "$LOG_FILE"
+        echo "[$(timestamp)] [$PROFILE] SUCCESS: $BASENAME transferred to $DEST_HOST:$DEST_DIR"
         SENT=1
         break
       else
         if echo "$SFTP_OUTPUT" | grep -qi "Permission denied\|Authentication failed"; then
-          echo "[$(timestamp)] [$PROFILE] AUTH ERROR: Failed to authenticate with $DEST_HOST. Check credentials or key permissions." | tee -a "$LOG_FILE"
+          echo "[$(timestamp)] [$PROFILE] AUTH ERROR: Authentication failed for $DEST_HOST"
         else
-          echo "[$(timestamp)] [$PROFILE] ERROR: Failed to transfer $BASENAME to $DEST_HOST:$DEST_DIR" | tee -a "$LOG_FILE"
-          echo "[$(timestamp)] [$PROFILE] SFTP output: $SFTP_OUTPUT" >> "$LOG_FILE"
+          echo "[$(timestamp)] [$PROFILE] ERROR: Transfer failed for $BASENAME to $DEST_HOST:$DEST_DIR"
+          echo "[$(timestamp)] [$PROFILE] SFTP output:"
+          echo "$SFTP_OUTPUT"
         fi
       fi
     fi
   done
 
   if [[ $SENT -eq 0 ]]; then
-    echo "[$(timestamp)] [$PROFILE] SKIPPED: No matching destination for $BASENAME" | tee -a "$LOG_FILE"
+    echo "[$(timestamp)] [$PROFILE] SKIPPED: No matching destination for $BASENAME"
   fi
 done
 
