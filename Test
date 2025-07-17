@@ -9,53 +9,73 @@ fi
 # Directory to scan
 OUTGOING_DIR="/data/outgoing"
 
-# Path to SSH private key (update as needed)
+# Path to SSH private key
 KEY_PATH="$HOME/.ssh/id_rsa"
 
-# Initialize environment-specific destination map
+# Log file
+LOG_FILE="/var/log/sftp_transfer_${PROFILE,,}.log"
+
+# Initialize destination map with user@host|remote_path
 typeset -A DEST_MAP
 
 if [[ "$PROFILE" == "UAT" ]]; then
-  DEST_MAP["INV_"]="uat_user1@sftp.uat-acme.com"
-  DEST_MAP["PAY_"]="uat_user2@sftp.uat-beta.com"
-  DEST_MAP["LOG_"]="uat_user3@sftp.uat-gamma.com"
+  DEST_MAP["INV_"]="uat_user1@sftp.uat-acme.com|/remote/uat/invoices"
+  DEST_MAP["PAY_"]="uat_user2@sftp.uat-beta.com|/remote/uat/payments"
+  DEST_MAP["LOG_"]="uat_user3@sftp.uat-gamma.com|/remote/uat/logs"
 
 elif [[ "$PROFILE" == "PROD" ]]; then
-  DEST_MAP["INV_"]="prod_user1@sftp.prod-acme.com"
-  DEST_MAP["PAY_"]="prod_user2@sftp.prod-beta.com"
-  DEST_MAP["LOG_"]="prod_user3@sftp.prod-gamma.com"
+  DEST_MAP["INV_"]="prod_user1@sftp.prod-acme.com|/remote/prod/invoices"
+  DEST_MAP["PAY_"]="prod_user2@sftp.prod-beta.com|/remote/prod/payments"
+  DEST_MAP["LOG_"]="prod_user3@sftp.prod-gamma.com|/remote/prod/logs"
 
 else
   echo "ERROR: Invalid PROFILE '$PROFILE'. Expected 'UAT' or 'PROD'."
   exit 2
 fi
 
-# Process each file in the outgoing folder
+# Timestamp function
+timestamp() {
+  date '+%Y-%m-%d %H:%M:%S'
+}
+
+# Process each file
 for FILE in "$OUTGOING_DIR"/*; do
+  [[ -f "$FILE" ]] || continue  # Skip if not a regular file
   BASENAME=$(basename "$FILE")
   SENT=0
 
   for PATTERN in "${!DEST_MAP[@]}"; do
     if [[ "$BASENAME" == ${PATTERN}* ]]; then
-      DEST="${DEST_MAP[$PATTERN]}"
-      echo "[$PROFILE] Transferring $BASENAME to $DEST..."
+      DEST_INFO="${DEST_MAP[$PATTERN]}"
+      DEST_HOST=$(echo "$DEST_INFO" | cut -d'|' -f1)
+      DEST_DIR=$(echo "$DEST_INFO" | cut -d'|' -f2)
 
-      sftp -i "$KEY_PATH" "$DEST" <<EOF
+      echo "[$(timestamp)] [$PROFILE] Transferring $BASENAME to $DEST_HOST:$DEST_DIR..." | tee -a "$LOG_FILE"
+
+      SFTP_OUTPUT=$(sftp -i "$KEY_PATH" "$DEST_HOST" 2>&1 <<EOF
+cd "$DEST_DIR"
 put "$FILE"
 EOF
+)
+      EXIT_CODE=$?
 
-      if [[ $? -eq 0 ]]; then
-        echo "[$PROFILE] Successfully transferred $BASENAME to $DEST"
+      if [[ $EXIT_CODE -eq 0 ]]; then
+        echo "[$(timestamp)] [$PROFILE] SUCCESS: $BASENAME transferred to $DEST_HOST:$DEST_DIR" | tee -a "$LOG_FILE"
         SENT=1
         break
       else
-        echo "[$PROFILE] ERROR transferring $BASENAME to $DEST"
+        if echo "$SFTP_OUTPUT" | grep -qi "Permission denied\|Authentication failed"; then
+          echo "[$(timestamp)] [$PROFILE] AUTH ERROR: Failed to authenticate with $DEST_HOST. Check credentials or key permissions." | tee -a "$LOG_FILE"
+        else
+          echo "[$(timestamp)] [$PROFILE] ERROR: Failed to transfer $BASENAME to $DEST_HOST:$DEST_DIR" | tee -a "$LOG_FILE"
+          echo "[$(timestamp)] [$PROFILE] SFTP output: $SFTP_OUTPUT" >> "$LOG_FILE"
+        fi
       fi
     fi
   done
 
   if [[ $SENT -eq 0 ]]; then
-    echo "[$PROFILE] No matching pattern for $BASENAME. Skipping."
+    echo "[$(timestamp)] [$PROFILE] SKIPPED: No matching destination for $BASENAME" | tee -a "$LOG_FILE"
   fi
 done
 
