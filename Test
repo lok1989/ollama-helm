@@ -58,3 +58,36 @@ EOF
     echo "[$PROFILE] No matching pattern for $BASENAME. Skipping."
   fi
 done
+
+
+
+
+
+String filter = "";
+String whereClause = "";
+
+// Check and extract filters
+if (request.getFilters() != null && request.getFilters().length > 0) {
+    List<RunQueryRequest.Filter> filters = List.of(request.getFilters());
+    filter = filters.get(0).getFilters();
+
+    // Case-insensitive check and parse for firmCd
+    if (filter != null && filter.toLowerCase().contains("[firmcd] equals")) {
+        String[] parts = filter.split("(?i)equals");  // (?i) = case-insensitive
+        if (parts.length == 2) {
+            String fieldName = parts[0].replace("[", "").replace("]", "").trim();  // e.g., firmCd
+            String value = parts[1].trim();  // e.g., 01
+            if (!fieldName.isEmpty() && !value.isEmpty()) {
+                whereClause = " WHERE " + fieldName.toUpperCase() + " = '" + value + "'";
+            }
+        }
+    }
+}
+
+// Build the final SQL query
+String sql = "SELECT * FROM ARCHIVE.RICH_SETT_LADDER_POSITION_CACHE" +
+             whereClause +
+             " LIMIT " + request.getPageSize() +
+             " OFFSET " + (request.getPage() * request.getPageSize());
+
+SqlFieldsQuery query = new SqlFieldsQuery(sql);
