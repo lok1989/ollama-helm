@@ -41,7 +41,7 @@ for FILE in "$OUTGOING_DIR"/*; do
   BASENAME=$(basename "$FILE")
   SENT=0
 
-  for PATTERN in "${!DEST_MAP[@]}"; do
+ for PATTERN in "${!DEST_MAP[@]}"; do
     if [[ "$BASENAME" == ${PATTERN}* ]]; then
       DEST_INFO="${DEST_MAP[$PATTERN]}"
       DEST_HOST=$(echo "$DEST_INFO" | cut -d'|' -f1)
@@ -49,7 +49,7 @@ for FILE in "$OUTGOING_DIR"/*; do
 
       echo "[$(timestamp)] [$PROFILE] Transferring $BASENAME to $DEST_HOST:$DEST_DIR..."
 
-      SFTP_OUTPUT=$(sftp -i "$KEY_PATH" "$DEST_HOST" 2>&1 <<EOF
+      SFTP_OUTPUT=$(sftp "$DEST_HOST" 2>&1 <<EOF
 cd "$DEST_DIR"
 put "$FILE"
 EOF
