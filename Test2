@@ -1,60 +1,21 @@
-Method 1 : Direct Upsert
-
-new input data
-     ↓
-upsert into product_invenotry_retail
-
-
-Method 2 : Three Collection solution recommended by Grok
-new input data
-     ↓
-load into → [new_product_invenotry_retail] (Insert)
-     ↓                          ↓
-compare IDs → product_invenotry_retail -> [previous_product_invenotry_retail] (Copy. Will be a Huge lookup)
-     ↓                          ↓
-update / insert → product_invenotry_retail (Copy, This step will again do a full insert)
-
-
-Method 3 : Use Mongo Aggregation
-new input data
-     ↓
-load into → [stage_product]
-     ↓
-$lookup + update → [product]  (in-place)
-
-
-db.old_collection.aggregate([
-  {
-    $lookup: {
-      from: "new_collection",
-      let: {
-        upc: "$upc",
-        country: "$country",
-        storeNumber: "$storeNumber"
-      },
-      pipeline: [
-        {
-          $match: {
-            $expr: {
-              $and: [
-                { $eq: ["$upc", "$$upc"] },
-                { $eq: ["$country", "$$country"] },
-                { $eq: ["$storeNumber", "$$storeNumber"] }
-              ]
-            }
-          }
-        }
-      ],
-      as: "matched"
-    }
-  },
-  {
-    $match: {
-      matched: { $eq: [] } // No match in new_collection
-    }
-  },
-  {
-    $project: { _id: 1 } // Return only the _id
-  }
-]);
-
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1. Staging Collection + $merge        | 2. InventoryProcessorMongoDB         | 3. Bulk Upsert + Cleanup (Final Form)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+           ▼                          |           ▼                          |           ▼
+   [ Incoming Feed ]                |   [ Incoming Feed ]                |   [ Incoming Feed ]
+           │                          |           │                          |           │
+           ▼                          |           ▼                          |   Split into 40K-sized batches
+ Insert into stage_product          | Insert into new_records            |           │
+     (insertMany)                   |     (insertMany)                   |           ▼
+           │                          |           │                          | For each batch:
+           ▼                          |           ▼                          |   → Construct bulk `UpdateOneModel`s
+   $merge into product              | Compare with previous_records      |   → `bulkWrite(upsert = true)` on product
+   on upc, country, storeNumber     | using ID matching                  |           │
+           │                          |           │                          ▼
+           ▼                          |           ▼                     All records written to `product`
+ Update availableQty where          | ┌────────────┐   ┌────────────┐       |
+ skxUpdatedDate < batch timestamp   | │ updateExisting │ │ insertNew │       |
+           ▼                        | └──────┬───────┘   └──────┬─────┘       ▼
+                                    |        ▼                 ▼        Final cleanup:
+                                    |  processed_records (final view)  updateMany() → availableQty = 0
+                                                                         where skxUpdatedDate < batch time
